@@ -32,10 +32,10 @@
         
         // Note: We are passing the token in the headers. 
         // Jolt typically uses standard Authorization or custom headers.
-        const HEADERS = {
+         const HEADERS = {
             "Content-Type": "application/json",
-            "Authorization": "__775aea000eec4f5d945926919036a2ae", // Your Token
-            "X-Jolt-Company-Id": "0005875b260d4c6a9c965f4e5e59b569" // Company ID (Added as header just in case)
+            "jolt_auth_token": "__775aea000eec4f5d945926919036a2ae", // Your Token
+            "jolt_companyid": "0005875b260d4c6a9c965f4e5e59b569" // Company ID (Added as header just in case)
         };
 
         // --- THE QUERY ---
@@ -101,4 +101,5 @@
         }
     </script>
 </body>
+
 </html>
