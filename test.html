@@ -1,102 +1,171 @@
-<!-- Place this where you want the checklist names to appear -->
-<div id="remaining-checklists-container">
-  <div id="loader-checklists" style="display:none">Loading…</div>
-  <ul id="remaining-checklists"></ul>
-</div>
-
-<div id="remaining-checklists-container">
-  <div id="loader-checklists" style="display:none">Loading…</div>
-  <ul id="remaining-checklists"></ul>
-</div>
-
-<script>
-  // --- CONFIG (use your Cloudflare worker endpoint and mode) ---
-  const ENDPOINT = "https://jolt-proxy.ckuran.workers.dev";
-  const HEADERS = { "Content-Type": "application/json" };
-
-  // Use LOCATION mode with the location id you provided
-  const MODE_DATA = { mode: "LOCATION", id: "TG9jYXRpb246MDAxY2U5MGEyNjYxOTU3NWQ1ZjI3YTc0M2IyNGI1OWY=" };
-
-  // GraphQL query adapted from your sandbox (requests both instanceTitle and template.title)
-  const QUERY = `
-    query ListInstances($filter: ListInstancesFilter!, $mode: ModeInput) {
-      listInstances(filter: $filter, mode: $mode) {
-        id
-        instanceTitle
-        completionTimestamp
-        listTemplate { title }
-      }
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Remaining Checklists — Today</title>
+  <style>
+    :root{
+      --bg:#f7f8fb; --card:#fff; --muted:#666; --accent:#0b66ff; --err:#d9534f;
+      --ok:#28a745; --pad:14px; --radius:8px;
     }
-  `;
+    body{font-family:Inter,system-ui,Segoe UI,Roboto,"Helvetica Neue",Arial;margin:0;background:var(--bg);color:#111}
+    .wrap{max-width:760px;margin:28px auto;padding:18px}
+    header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px}
+    h1{font-size:18px;margin:0}
+    .controls{display:flex;gap:8px;align-items:center}
+    button{background:var(--accent);color:#fff;border:0;padding:8px 12px;border-radius:6px;cursor:pointer}
+    button.secondary{background:#fff;color:var(--accent);border:1px solid #dfe7ff}
+    .card{background:var(--card);border-radius:var(--radius);padding:var(--pad);box-shadow:0 1px 2px rgba(16,24,40,0.04)}
+    #loader-checklists{display:none;color:var(--muted);margin-bottom:8px}
+    ul#remaining-checklists{list-style:none;padding:0;margin:0}
+    ul#remaining-checklists li{padding:10px 12px;border-radius:6px;margin-bottom:8px;background:#fbfdff;border:1px solid #eef4ff}
+    ul#remaining-checklists li.err{background:#fff0f0;border-color:#ffd6d6;color:var(--err)}
+    .meta{font-size:12px;color:var(--muted);margin-top:8px}
+    footer{margin-top:18px;font-size:13px;color:var(--muted)}
+    .small{font-size:13px;color:var(--muted)}
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>Remaining Checklists Due Today</h1>
+      <div class="controls">
+        <button id="refreshBtn">Refresh</button>
+        <button id="inspectBtn" class="secondary">Show Raw Payload</button>
+      </div>
+    </header>
 
-  // Compute local start/end epoch seconds for today
-  function getTodayEpochWindowLocal() {
-    const now = new Date();
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    return { start: Math.floor(start.getTime() / 1000), end: Math.floor(end.getTime() / 1000) };
-  }
+    <div class="card">
+      <div id="loader-checklists">Loading…</div>
+      <ul id="remaining-checklists"></ul>
 
-  async function renderChecklistNamesForToday() {
+      <div class="meta small">
+        Showing checklists due today. Completed lists are excluded. Data fetched via your secure proxy.
+      </div>
+    </div>
+
+    <footer>
+      <div class="small">Tip: open DevTools console to inspect the raw GraphQL response for debugging.</div>
+    </footer>
+  </div>
+
+  <script>
+    // CONFIG — use your Cloudflare worker endpoint and mode
+    const ENDPOINT = "https://jolt-proxy.ckuran.workers.dev";
+    const HEADERS = { "Content-Type": "application/json" };
+
+    // Use LOCATION mode with the location id you provided
+    const MODE_DATA = { mode: "LOCATION", id: "TG9jYXRpb246MDAxY2U5MGEyNjYxOTU3NWQ1ZjI3YTc0M2IyNGI1OWY=" };
+
+    // GraphQL query adapted to request instanceTitle and template.title
+    const QUERY = `
+      query ListInstances($filter: ListInstancesFilter!, $mode: ModeInput) {
+        listInstances(filter: $filter, mode: $mode) {
+          id
+          instanceTitle
+          completionTimestamp
+          listTemplate { title }
+          displayTimestamp
+          createTimestamp
+        }
+      }
+    `;
+
+    // Compute local start/end epoch seconds for today
+    function getTodayEpochWindowLocal() {
+      const now = new Date();
+      const start = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+      return { start: Math.floor(start.getTime() / 1000), end: Math.floor(end.getTime() / 1000) };
+    }
+
+    // DOM refs
     const loader = document.getElementById('loader-checklists');
     const listEl = document.getElementById('remaining-checklists');
-    loader.style.display = 'block';
-    listEl.innerHTML = '';
+    const refreshBtn = document.getElementById('refreshBtn');
+    const inspectBtn = document.getElementById('inspectBtn');
 
-    const { start, end } = getTodayEpochWindowLocal();
+    // Store last payload for inspection
+    let lastPayload = null;
 
-    // Build the filter exactly like your sandbox: incomplete, not sublists, deadline window
-    const filter = {
-      deadlineAfterTimestamp: start,
-      deadlineBeforeTimestamp: end,
-      completionStatus: "INCOMPLETE",
-      isSublist: false
-    };
+    async function fetchAndRender() {
+      loader.style.display = 'block';
+      listEl.innerHTML = '';
 
-    const variables = { filter, mode: MODE_DATA };
+      const { start, end } = getTodayEpochWindowLocal();
 
-    try {
-      const res = await fetch(ENDPOINT, {
-        method: "POST",
-        headers: HEADERS,
-        body: JSON.stringify({ query: QUERY, variables })
-      });
+      // Build the filter like your sandbox: incomplete, not sublists, deadline window
+      const filter = {
+        deadlineAfterTimestamp: start,
+        deadlineBeforeTimestamp: end,
+        completionStatus: "INCOMPLETE",
+        isSublist: false
+      };
 
-      const payload = await res.json();
-      console.log('listInstances payload', payload); // inspect raw response in DevTools
+      const variables = { filter, mode: MODE_DATA };
 
-      if (!payload || payload.errors) {
-        console.error('GraphQL error', payload.errors || payload);
-        listEl.innerHTML = '<li class="err">Error loading checklists</li>';
-        return;
+      try {
+        const res = await fetch(ENDPOINT, {
+          method: "POST",
+          headers: HEADERS,
+          body: JSON.stringify({ query: QUERY, variables })
+        });
+
+        const payload = await res.json();
+        lastPayload = payload;
+        console.log('listInstances payload', payload);
+
+        if (!payload || payload.errors) {
+          console.error('GraphQL error', payload.errors || payload);
+          listEl.innerHTML = '<li class="err">Error loading checklists</li>';
+          return;
+        }
+
+        const lists = payload.data.listInstances || [];
+        // Filter out any that are completed (safety check)
+        const remaining = lists.filter(l => !l.completionTimestamp);
+
+        if (remaining.length === 0) {
+          listEl.innerHTML = '<li>No remaining checklists for today</li>';
+          return;
+        }
+
+        // Render only the checklist name: prefer instanceTitle, then template.title
+        remaining.forEach(l => {
+          const name = (l.instanceTitle && l.instanceTitle.trim()) ||
+                       (l.listTemplate && l.listTemplate.title && l.listTemplate.title.trim()) ||
+                       `Checklist ${l.id}`;
+
+          const li = document.createElement('li');
+          li.textContent = name;
+          li.title = `id: ${l.id}\ncreated: ${l.createTimestamp || 'n/a'}\ndisplay: ${l.displayTimestamp || 'n/a'}`;
+          listEl.appendChild(li);
+        });
+      } catch (err) {
+        console.error(err);
+        listEl.innerHTML = '<li class="err">Request failed</li>';
+      } finally {
+        loader.style.display = 'none';
       }
-
-      const lists = payload.data.listInstances || [];
-      // Filter out any that are completed (safety check)
-      const remaining = lists.filter(l => !l.completionTimestamp);
-
-      if (remaining.length === 0) {
-        listEl.innerHTML = '<li>No remaining checklists for today</li>';
-        return;
-      }
-
-      // Render only the checklist name: prefer instanceTitle, then template.title
-      remaining.forEach(l => {
-        const name = (l.instanceTitle && l.instanceTitle.trim()) ||
-                     (l.listTemplate && l.listTemplate.title && l.listTemplate.title.trim()) ||
-                     `Checklist ${l.id}`;
-
-        const li = document.createElement('li');
-        li.textContent = name;
-        listEl.appendChild(li);
-      });
-    } catch (err) {
-      console.error(err);
-      listEl.innerHTML = '<li class="err">Request failed</li>';
-    } finally {
-      loader.style.display = 'none';
     }
-  }
 
-  document.addEventListener('DOMContentLoaded', renderChecklistNamesForToday);
-</script>
+    // Button handlers
+    refreshBtn.addEventListener('click', () => fetchAndRender());
+    inspectBtn.addEventListener('click', () => {
+      if (!lastPayload) {
+        alert('No payload available yet. Refresh first.');
+        return;
+      }
+      // Open a new window with formatted JSON for quick inspection
+      const w = window.open('', '_blank');
+      w.document.write('<pre style="white-space:pre-wrap;font-family:monospace;padding:12px;">' + 
+                       JSON.stringify(lastPayload, null, 2) + '</pre>');
+      w.document.title = 'Raw GraphQL Payload';
+    });
+
+    // Auto-run on load
+    document.addEventListener('DOMContentLoaded', fetchAndRender);
+  </script>
+</body>
+</html>
